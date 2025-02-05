@@ -1,6 +1,7 @@
 import numpy as np
 import opensimplex
 import matplotlib.pyplot as plt
+from scipy import ndimage
 
 from PIL import Image
 
@@ -14,6 +15,7 @@ materials = {
     "FLUX": map_hex_to_rgb(0xaf00e0),
     "DIRT": map_hex_to_rgb(0x000000),
     "WATER": map_hex_to_rgb(0x9966ff),
+    "WATER_SURFACE": map_hex_to_rgb(0x6600ff),
     "AIR": map_hex_to_rgb(0xffffff),
     "CAVE": map_hex_to_rgb(0x993300),
     "GRASS": map_hex_to_rgb(0x00ff00),
@@ -59,6 +61,21 @@ def world_border(array):
 
     return array
 
+def water_edge(array):
+
+    mask = np.all(array == materials["WATER"], axis=-1)
+    labeled_array, num_features = ndimage.label(mask)
+
+    # Create a border around the clusters
+    structure = ndimage.generate_binary_structure(2, 1)  # 4-connected neighborhood
+    # Expand the labeled area slightly, 5 iterations work for whatever reason, while 1 or 2 do not.
+    dilated = ndimage.binary_dilation(labeled_array, structure=structure, iterations=5)
+
+    # XOR the original clusters to get the border
+    border = dilated ^ (labeled_array > 0)
+    array[border] = materials["CAVE"]
+
+    return array
 
 def underground_generation():
     # Default is just everything covered in dirt.
@@ -68,6 +85,9 @@ def underground_generation():
 
     # Add water in another step
     array = run_noise_step(dims, array, materials["WATER"], threshold=0.5, freq=1 / 200)
+
+    # Run edge detection and replace edge of water with CAVE
+    array = water_edge(array)
 
     # Add flux in another step
     array = run_noise_step(dims, array, materials["FLUX"], threshold=0.7, freq=1 / 75)
@@ -93,7 +113,7 @@ def terrain(array, dims):
         array[(start_height + 20):, ix] = materials["DIRT"]
 
     # Seed some water near the surface
-    # Never breach the surface
+    # Never breach surface edge
     for iy, ix in np.ndindex(dims):
         if iy < surface_heights[ix] + 10: continue
 
@@ -143,6 +163,8 @@ def overworld_generation(seed=None):
     array = np.full((dims[0], dims[1], 3), materials["AIR"])
 
     array = terrain(array, dims)
+    array = water_edge(array)
+
     array = mountains(array, dims)
 
     return array
